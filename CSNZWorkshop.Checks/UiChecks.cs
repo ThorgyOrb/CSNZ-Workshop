@@ -5,6 +5,26 @@ using CSNZWorkshop.Models;
 
 static class UiChecks
 {
+    public static void VerifyEffectCycle(ModelBundle bundle) => OnUi(() =>
+    {
+        using var form = new ModelForm(bundle) { ShowInTaskbar = false, Opacity = 0 };
+        form.Show(); Application.DoEvents();
+        var controls = Descendants(form).ToArray();
+        var variants = controls.OfType<ComboBox>().Single(c => c.Items.Cast<object>().Any(i => i.ToString() == "1: lightning2"));
+        controls.OfType<Button>().Single(b => b.Text == "Ver arma con efectos").PerformClick();
+        var watch = Stopwatch.StartNew();
+        while (variants.SelectedIndex != 1)
+        {
+            Application.DoEvents(); Thread.Sleep(10);
+            if (watch.ElapsedMilliseconds > 10000) throw new Exception("Effect bodygroup did not cycle");
+        }
+        controls.OfType<Button>().Single(b => b.Text == "Pausar").PerformClick();
+        watch.Restart(); while (watch.ElapsedMilliseconds < 350) { Application.DoEvents(); Thread.Sleep(10); }
+        if (variants.SelectedIndex != 1) throw new Exception("Effects continued after pause");
+        controls.OfType<CheckBox>().Single(c => c.Text == "Simular variantes de efectos").Checked = false;
+        if (!variants.Enabled || variants.SelectedIndex != 0) throw new Exception("Manual variant not restored");
+        form.Close();
+    });
     public static void VerifyExportDiagnostic(CSNZWorkshop.Archives.ResourceEntry entry) => OnUi(() =>
     {
         using var form = new ModExportForm([entry], [entry]) { ShowInTaskbar = false, Opacity = 0 };

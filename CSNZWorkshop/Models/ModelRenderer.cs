@@ -8,7 +8,8 @@ public sealed record ViewSettings(float Yaw = 0.55f, float Pitch = -0.2f, float 
     int Sequence = -1, int Frame = 0, int Skin = 0, int[]? Variants = null, bool Wireframe = false,
     Vector3? SharedCenter = null, float? SharedRadius = null, int[]? AdditiveTextures = null, bool NexonEffects = true,
     float PanX = 0, float PanY = 0, bool ShowBones = false, int Background = unchecked((int)0xff202833),
-    bool FocusGeometry = false, bool HideEffects = false, bool FirstPerson = false, float FieldOfView = 90);
+    bool FocusGeometry = false, bool HideEffects = false, bool FirstPerson = false, float FieldOfView = 90, int[]? FramingGroups = null,
+    int[]? FadingGroups = null, float EffectIntensity = 1);
 
 public static class ModelRenderer
 {
@@ -28,6 +29,7 @@ public static class ModelRenderer
         var selected = model.Bodies.Select((b, i) => b.Variants.Length == 0 ? null : b.Variants[
             Math.Clamp(settings.Variants is not null && i < settings.Variants.Length ? settings.Variants[i] : 0, 0, b.Variants.Length - 1)])
             .Where(p => p is not null).Select(p => p!).ToArray();
+        var selectedGroups = model.Bodies.Select((b, i) => (b, i)).Where(pair => pair.b.Variants.Length > 0).Select(pair => pair.i).ToArray();
         int TextureId(StudioTriangle triangle) => model.Skins.Length > 0 && triangle.Skin < model.Skins[0].Length
             ? model.Skins[Math.Clamp(settings.Skin, 0, model.Skins.Length - 1)][triangle.Skin] : -1;
         bool Effect(StudioTriangle triangle)
@@ -36,10 +38,12 @@ public static class ModelRenderer
             return id >= 0 && id < model.Textures.Length && ((model.Textures[id].Flags & 0x20) != 0
                 || IsNexonEffect(model.Textures[id]) || settings.AdditiveTextures?.Contains(id) == true);
         }
-        var framingVertices = selected.Select(part => part.Triangles.Where(t => !settings.FocusGeometry || !Effect(t))
+        var framingParts = model.Bodies.SelectMany((body, i) => settings.FramingGroups?.Contains(i) == true ? body.Variants
+            : body.Variants.Length == 0 ? [] : new[] { body.Variants[Math.Clamp(settings.Variants is not null && i < settings.Variants.Length ? settings.Variants[i] : 0, 0, body.Variants.Length - 1)] }).ToArray();
+        var framingVertices = framingParts.Select(part => part.Triangles.Where(t => !settings.FocusGeometry || !Effect(t))
             .SelectMany(t => new[] { t.A.Vertex, t.B.Vertex, t.C.Vertex }).Distinct().ToArray()).ToArray();
         if (framingVertices.All(v => v.Length == 0))
-            framingVertices = selected.Select(part => Enumerable.Range(0, part.Vertices.Length).ToArray()).ToArray();
+            framingVertices = framingParts.Select(part => Enumerable.Range(0, part.Vertices.Length).ToArray()).ToArray();
         var vertices = selected.Select(part => part.Vertices.Select((v, i) => Vector3.Transform(v, pose[part.BoneIndices[i]])).ToArray()).ToArray();
         // Stable framing samples the whole selected animation: the zoom stays fixed while it plays and
         // sequences that move the root bone keep the model inside the view.
@@ -52,9 +56,9 @@ public static class ModelRenderer
         else framing.Add(model.Pose());
         Vector3 min = new(float.PositiveInfinity), max = new(float.NegativeInfinity);
         foreach (var transforms in framing)
-            for (int p = 0; p < selected.Length; p++)
+            for (int p = 0; p < framingParts.Length; p++)
                 foreach (int i in framingVertices[p])
-                { var part = selected[p]; var v = Vector3.Transform(part.Vertices[i], transforms[part.BoneIndices[i]]); min = Vector3.Min(min, v); max = Vector3.Max(max, v); }
+                { var part = framingParts[p]; var v = Vector3.Transform(part.Vertices[i], transforms[part.BoneIndices[i]]); min = Vector3.Min(min, v); max = Vector3.Max(max, v); }
         if (!float.IsFinite(min.X)) return BitmapFrom(width, height, pixels);
         Vector3 center = settings.SharedCenter ?? (min + max) * 0.5f;
         float radius = settings.SharedRadius ?? Math.Max((max - min).Length() * .5f, .01f);
@@ -165,6 +169,8 @@ public static class ModelRenderer
                         int red = (int)(((color >> 16) & 255) * light), green = (int)(((color >> 8) & 255) * light), blue = (int)((color & 255) * light);
                         if (additive)
                         {
+                            float intensity = settings.FadingGroups?.Contains(selectedGroups[p]) == true ? Math.Clamp(settings.EffectIntensity, 0, 1) : 1;
+                            red = (int)(red * intensity); green = (int)(green * intensity); blue = (int)(blue * intensity);
                             int behind = pixels[pixel];
                             red = Math.Min(255, red + ((behind >> 16) & 255));
                             green = Math.Min(255, green + ((behind >> 8) & 255));

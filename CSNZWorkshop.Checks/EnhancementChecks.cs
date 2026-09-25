@@ -9,6 +9,33 @@ static class EnhancementChecks
     static int Changed(Bitmap image) => Enumerable.Range(0, image.Height).Sum(y => Enumerable.Range(0, image.Width).Count(x => image.GetPixel(x, y).ToArgb() != unchecked((int)0xff202833)));
     public static void Run(string root, Action<string, Action> check)
     {
+        check("Desvanecido: transición continua y brillo limitado al grupo elegido", () =>
+        {
+            Assert(EffectPreview.Fade(0, 900) == 0 && Math.Abs(EffectPreview.Fade(450, 900) - 1) < .0001f);
+            Assert(EffectPreview.Fade(899, 900) < .0001f && EffectPreview.Fade(901, 900) < .0001f);
+            var model = StudioModel.Parse(Synthetic.Model());
+            var original = model.Textures[0];
+            model.Textures[0] = original with { Flags = 0x24, Pixels = Enumerable.Repeat(unchecked((int)0xff402010), original.Pixels.Length).ToArray() };
+            using var invisible = ModelRenderer.Render(model, 160, 160, new(0, 0, FadingGroups: [0], EffectIntensity: 0));
+            using var half = ModelRenderer.Render(model, 160, 160, new(0, 0, FadingGroups: [0], EffectIntensity: .5f));
+            using var full = ModelRenderer.Render(model, 160, 160, new(0, 0));
+            using var otherGroup = ModelRenderer.Render(model, 160, 160, new(0, 0, FadingGroups: [1], EffectIntensity: 0));
+            Assert(invisible.GetPixel(80, 80).ToArgb() == unchecked((int)0xff202833));
+            Assert(half.GetPixel(80, 80).R == 64 && full.GetPixel(80, 80).R == 96);
+            Assert(otherGroup.GetPixel(80, 80) == full.GetPixel(80, 80));
+        });
+        check("Efectos: alterna geometría visible sin cambiar variantes manuales", () =>
+        {
+            var bundle = ModelBundle.Load(Synthetic.Model(), "test.mdl", "test", _ => null);
+            var part = bundle.Model.Bodies[0].Variants[0];
+            bundle.Model.Bodies[0] = new("effect", [part, part with { Name = "lightning2" }, part with { Triangles = [] }]);
+            int[] manual = [2];
+            Assert(EffectPreview.Suggested(bundle.Model, bundle.Model.Bodies[0]));
+            Assert(EffectPreview.Resolve(bundle.Model, manual, [0], 0, 150)[0] == 0);
+            Assert(EffectPreview.Resolve(bundle.Model, manual, [0], 150, 150)[0] == 1);
+            Assert(EffectPreview.Resolve(bundle.Model, manual, [0], 300, 150)[0] == 0 && manual[0] == 2);
+            UiChecks.VerifyEffectCycle(bundle);
+        });
         check("Encuadre principal: ignora efectos alejados y no cambia el MDL", () =>
         {
             byte[] original = Synthetic.Model(); var baseModel = StudioModel.Parse(original);

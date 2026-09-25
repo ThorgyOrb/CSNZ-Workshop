@@ -39,6 +39,12 @@ public sealed class ModelForm : Form
     bool ticking, panning;
     Point? drag;
     bool updating;
+    readonly HashSet<int> cyclingGroups = [];
+    readonly CheckBox simulateEffects = new() { Text = "Simular variantes de efectos", AutoSize = true };
+    readonly CheckBox cycleGroup = new() { Text = "Alternar este grupo", AutoSize = true };
+    readonly NumericUpDown effectInterval = new() { Minimum = 50, Maximum = 5000, Increment = 50, Value = 900, Width = 70 };
+    readonly ComboBox effectStyle = new() { Width = 155, DropDownStyle = ComboBoxStyle.DropDownList };
+    double effectMilliseconds;
 
 
     public ModelForm(ModelBundle bundle)
@@ -47,7 +53,7 @@ public sealed class ModelForm : Form
         Text = "CSNZ Workshop — " + bundle.Main.Name;
         Size = new(1200, 850); MinimumSize = new(950, 650); StartPosition = FormStartPosition.CenterParent;
         Font = new("Segoe UI", 10);
-        var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 195, Padding = new(8), AutoScroll = true };
+        var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 235, Padding = new(8), AutoScroll = true };
         var reset = new Button { Text = "Centrar", AutoSize = true };
         var compare = new Button { Text = "Comparar con modelo…", AutoSize = true };
         compare.Click += async (_, _) => { timer.Stop(); play.Text = "Reproducir"; await ModelComparisonForm.Open(this, bundle); };
@@ -64,6 +70,29 @@ public sealed class ModelForm : Form
         toolbar.Controls.AddRange([camera, bones, background, previousFrame, nextFrame, speed, capture]);
         toolbar.SetFlowBreak(capture, true);
         toolbar.Controls.AddRange([focusGeometry, hideEffects, firstPerson, new Label { Text = "FOV horizontal", AutoSize = true, Padding = new(0, 5, 0, 0) }, fov]);
+        toolbar.SetFlowBreak(fov, true);
+        var showEffects = new Button { Text = "Ver arma con efectos", AutoSize = true };
+        effectStyle.Items.AddRange(["Desvanecido suave", "Alternancia directa"]); effectStyle.SelectedIndex = 0;
+        toolbar.Controls.AddRange([showEffects, simulateEffects, cycleGroup, effectStyle, new Label { Text = "Duración (ms)", AutoSize = true }, effectInterval]);
+        effectStyle.SelectedIndexChanged += (_, _) => { effectMilliseconds = 0; DrawModel(); };
+        for (int i = 0; i < bundle.Model.Bodies.Length; i++) if (EffectPreview.Suggested(bundle.Model, bundle.Model.Bodies[i])) cyclingGroups.Add(i);
+        simulateEffects.CheckedChanged += (_, _) => { effectMilliseconds = 0; FillVariants(); };
+        cycleGroup.CheckedChanged += (_, _) =>
+        {
+            if (updating || body.SelectedIndex < 0) return;
+            if (cycleGroup.Checked) cyclingGroups.Add(body.SelectedIndex); else cyclingGroups.Remove(body.SelectedIndex);
+            effectMilliseconds = 0; FillVariants();
+        };
+        effectInterval.ValueChanged += (_, _) => { effectMilliseconds = 0; DrawModel(); };
+        showEffects.Click += (_, _) =>
+        {
+            Pause(); hideEffects.Checked = false; nexonEffects.Checked = true; focusGeometry.Checked = true;
+            simulateEffects.Checked = true; effectMilliseconds = 0;
+            int idle = Array.FindIndex(bundle.Model.Sequences, s => s.Name.StartsWith("idle", StringComparison.OrdinalIgnoreCase));
+            if (idle >= 0) sequences.SelectedIndex = idle + 1;
+            else if (sequences.SelectedIndex == 0 && bundle.Model.Sequences.Length > 0) sequences.SelectedIndex = 1;
+            animationFrame = frame.Value; clock.Restart(); timer.Start(); play.Text = "Pausar"; DrawModel();
+        };
         focusGeometry.CheckedChanged += (_, _) => DrawModel(); hideEffects.CheckedChanged += (_, _) => DrawModel();
         fov.ValueChanged += (_, _) => DrawModel();
         firstPerson.CheckedChanged += (_, _) =>
@@ -121,10 +150,10 @@ public sealed class ModelForm : Form
         {
             timer.Stop(); play.Text = "Reproducir";
             frame.Maximum = sequences.SelectedIndex > 0 ? bundle.Model.Sequences[sequences.SelectedIndex - 1].Frames - 1 : 0;
-            frame.Value = 0; DrawModel();
+            animationFrame = 0; effectMilliseconds = 0; frame.Value = 0; DrawModel();
         };
         skins.SelectedIndexChanged += (_, _) => DrawModel(); wire.CheckedChanged += (_, _) => DrawModel();
-        frame.ValueChanged += (_, _) => { if (!ticking) { animationFrame = frame.Value; clock.Restart(); } DrawModel(); };
+        frame.ValueChanged += (_, _) => { if (!ticking) { animationFrame = frame.Value; clock.Restart(); } if (!ticking) DrawModel(); };
         frame.MouseDown += (_, _) => Pause();
         body.SelectedIndexChanged += (_, _) => FillVariants();
         variant.SelectedIndexChanged += (_, _) => { if (!updating && body.SelectedIndex >= 0 && variant.SelectedIndex >= 0) { variants[body.SelectedIndex] = variant.SelectedIndex; DrawModel(); } };
@@ -144,18 +173,23 @@ public sealed class ModelForm : Form
         reset.Click += (_, _) => { camera.SelectedIndex = 0; yaw = firstPerson.Checked ? 0 : .55f; pitch = firstPerson.Checked ? 0 : -.2f; zoom = 1; panX = panY = 0; DrawModel(); };
         play.Click += (_, _) =>
         {
-            if (sequences.SelectedIndex <= 0) return;
+            if (sequences.SelectedIndex <= 0 && !simulateEffects.Checked) return;
             if (timer.Enabled) { timer.Stop(); play.Text = "Reproducir"; }
             else { animationFrame = frame.Value; clock.Restart(); timer.Start(); play.Text = "Pausar"; }
         };
         timer.Tick += (_, _) =>
         {
-            if (sequences.SelectedIndex <= 0) return;
-            var sequence = bundle.Model.Sequences[sequences.SelectedIndex - 1];
             double rate = speed.SelectedIndex switch { 0 => .25, 1 => .5, 3 => 2, _ => 1 };
-            animationFrame = (animationFrame + clock.Elapsed.TotalSeconds * sequence.Fps * rate) % sequence.Frames;
+            double elapsed = clock.Elapsed.TotalSeconds * rate;
+            if (simulateEffects.Checked) effectMilliseconds += elapsed * 1000;
+            if (sequences.SelectedIndex > 0)
+            {
+                var sequence = bundle.Model.Sequences[sequences.SelectedIndex - 1];
+                animationFrame = (animationFrame + elapsed * sequence.Fps) % sequence.Frames;
+            }
             clock.Restart(); ticking = true;
             try { frame.Value = (int)animationFrame; } finally { ticking = false; }
+            DrawModel();
         };
         prepare.Click += async (_, _) => await Prepare();
         Shown += (_, _) => { DrawModel(); DrawTexture(); };
@@ -180,7 +214,7 @@ public sealed class ModelForm : Form
             for (int i = 0; i < part.Variants.Length; i++) variant.Items.Add($"{i}: {part.Variants[i].Name}");
             if (variant.Items.Count > 0) variant.SelectedIndex = variants[body.SelectedIndex];
         }
-        updating = false; DrawModel();
+        cycleGroup.Checked = body.SelectedIndex >= 0 && cyclingGroups.Contains(body.SelectedIndex); variant.Enabled = !(simulateEffects.Checked && cycleGroup.Checked); updating = false; DrawModel();
     }
 
     void DrawModel()
@@ -189,9 +223,15 @@ public sealed class ModelForm : Form
         try
         {
             var bitmap = ModelRenderer.Render(bundle.Model, view.Width, view.Height,
-                new(yaw, pitch, zoom, sequences.SelectedIndex - 1, frame.Value, skins.SelectedIndex, variants, wire.Checked, AdditiveTextures: additiveTextures.ToArray(), NexonEffects: nexonEffects.Checked, PanX: panX, PanY: panY, ShowBones: bones.Checked, FocusGeometry: focusGeometry.Checked, HideEffects: hideEffects.Checked, FirstPerson: firstPerson.Checked, FieldOfView: (float)fov.Value, Background: background.SelectedIndex switch { 1 => unchecked((int)0xff666666), 2 => unchecked((int)0xffe4e9ef), _ => unchecked((int)0xff202833) }));
+                new(yaw, pitch, zoom, sequences.SelectedIndex - 1, frame.Value, skins.SelectedIndex, simulateEffects.Checked ? EffectPreview.Resolve(bundle.Model, variants, cyclingGroups, effectMilliseconds, (int)effectInterval.Value) : variants, wire.Checked, FramingGroups: simulateEffects.Checked ? cyclingGroups.ToArray() : null, FadingGroups: simulateEffects.Checked && effectStyle.SelectedIndex == 0 ? cyclingGroups.ToArray() : null, EffectIntensity: EffectPreview.Fade(effectMilliseconds, (int)effectInterval.Value), AdditiveTextures: additiveTextures.ToArray(), NexonEffects: nexonEffects.Checked, PanX: panX, PanY: panY, ShowBones: bones.Checked, FocusGeometry: focusGeometry.Checked, HideEffects: hideEffects.Checked, FirstPerson: firstPerson.Checked, FieldOfView: (float)fov.Value, Background: background.SelectedIndex switch { 1 => unchecked((int)0xff666666), 2 => unchecked((int)0xffe4e9ef), _ => unchecked((int)0xff202833) }));
             var old = view.Image; view.Image = bitmap; old?.Dispose();
-            status.Text = $"Izquierdo: girar · Derecho/central: desplazar · Rueda: zoom · Fotograma {frame.Value}/{frame.Maximum} · Materiales aproximados";
+            if (simulateEffects.Checked && body.SelectedIndex >= 0 && cyclingGroups.Contains(body.SelectedIndex))
+            {
+                updating = true;
+                variant.SelectedIndex = EffectPreview.Resolve(bundle.Model, variants, cyclingGroups, effectMilliseconds, (int)effectInterval.Value)[body.SelectedIndex];
+                updating = false;
+            }
+            status.Text = $"Izquierdo: girar · Derecho/central: desplazar · Rueda: zoom · Fotograma {frame.Value}/{frame.Maximum} · Materiales aproximados" + (simulateEffects.Checked ? $" · Simulación: {cyclingGroups.Count} grupos" : "");
         }
         catch (Exception ex)
         {
