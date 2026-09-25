@@ -2,13 +2,15 @@ namespace CSNZWorkshop;
 
 public sealed class MainForm : Form
 {
+    readonly SessionStore session = new(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CSNZWorkshop"));
     readonly TextBox folder = new() { Text = Inventory.DefaultPath, Dock = DockStyle.Fill };
-    readonly TextBox search = new() { PlaceholderText = "Buscar paquete o ruta…", Width = 330 };
+    readonly TextBox search = new() { PlaceholderText = "Buscar recursos en todos los paquetes…", Width = 330 };
+    readonly TextBox packageSearch = new() { PlaceholderText = "Filtrar paquetes…", Width = 220 };
     readonly ComboBox format = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 100 };
     readonly Button scan = new() { Text = "Escanear", AutoSize = true };
     readonly Button export = new() { Text = "Exportar inventario", AutoSize = true, Enabled = false };
     readonly Button resources = new() { Text = "Ver recursos", AutoSize = true, Enabled = false };
-    readonly Button library = new() { Text = "Biblioteca completa", AutoSize = true, Enabled = false };
+    readonly Button library = new() { Text = "Buscar en todos", AutoSize = true, Enabled = false };
     readonly Button openModel = new() { Text = "Abrir modelo…", AutoSize = true };
     readonly Label status = new() { Text = "Selecciona la carpeta Data de CSNZ y pulsa Escanear.", Dock = DockStyle.Fill, AutoSize = true };
     readonly DataGridView grid = new()
@@ -29,12 +31,13 @@ public sealed class MainForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         Font = new("Segoe UI", 10);
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new(18), ColumnCount = 1, RowCount = 7 };
-        foreach (var height in new float[] { 42, 38, 76 }) layout.RowStyles.Add(new(SizeType.Absolute, height));
+        foreach (var height in new float[] { 82, 42, 88 }) layout.RowStyles.Add(new(SizeType.Absolute, height));
         layout.RowStyles.Add(new(SizeType.Percent, 100));
         layout.RowStyles.Add(new(SizeType.Absolute, 100));
         layout.RowStyles.Add(new(SizeType.Absolute, 40));
         layout.RowStyles.Add(new(SizeType.Absolute, 36));
-        layout.Controls.Add(new Label { Text = "CSNZ Workshop  /  Inventario NAR + PAK", AutoSize = true, Font = new("Segoe UI", 16, FontStyle.Bold) }, 0, 0);
+        layout.Controls.Add(UiTheme.Header("CSNZ Workshop", "Explora los recursos del juego · Prepara tu próximo mod"), 0, 0);
+        UiTheme.Primary(library); UiTheme.Primary(scan);
         var location = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3 };
         location.ColumnStyles.Add(new(SizeType.Percent, 100));
         location.ColumnStyles.Add(new(SizeType.Absolute, 105));
@@ -42,9 +45,9 @@ public sealed class MainForm : Form
         var browse = new Button { Text = "Carpeta…", AutoSize = true };
         location.Controls.Add(folder, 0, 0); location.Controls.Add(browse, 1, 0); location.Controls.Add(scan, 2, 0);
         layout.Controls.Add(location, 0, 1);
-        var filters = new FlowLayoutPanel { Dock = DockStyle.Fill };
+        var filters = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new(0, 5, 0, 0) };
         format.Items.AddRange(["Todos", "NAR", "PAK"]); format.SelectedIndex = 0;
-        filters.Controls.AddRange([search, format, export, resources, library, openModel]); layout.Controls.Add(filters, 0, 2);
+        filters.Controls.AddRange([search, library, packageSearch, format, export, resources, openModel]); layout.Controls.Add(filters, 0, 2);
         grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Paquete", DataPropertyName = "Nombre", FillWeight = 35 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Formato", DataPropertyName = "Formato", FillWeight = 12 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Bytes", DataPropertyName = "Bytes", FillWeight = 20, DefaultCellStyle = new() { Format = "N0" } });
@@ -52,13 +55,30 @@ public sealed class MainForm : Form
         layout.Controls.Add(grid, 0, 3); layout.Controls.Add(details, 0, 4); layout.Controls.Add(status, 0, 5);
         layout.Controls.Add(new Label { Text = "Abre los recursos de un paquete o la biblioteca completa para buscar, ver modelos y extraer archivos.", AutoSize = true }, 0, 6);
         Controls.Add(layout);
+        folder.Text = session.State.GameFolder;
+        var dark = new CheckBox { Text = "Tema oscuro", AutoSize = true, Checked = session.State.Dark };
+        filters.Controls.Add(dark); UiTheme.Dark = dark.Checked; UiTheme.Attach(this);
+        dark.CheckedChanged += (_, _) => { UiTheme.Dark = session.State.Dark = dark.Checked; UiTheme.Apply(this); };
+        FormClosing += (_, _) =>
+        {
+            session.State.GameFolder = folder.Text.Trim();
+            if (!session.Save()) MessageBox.Show(this, session.Warning, "Preferencias");
+        };
+        if (session.Warning is not null) status.Text = session.Warning;
+        Shown += async (_, _) => { if (Directory.Exists(session.State.GameFolder)) await Scan(); };
         browse.Click += (_, _) => { using var dialog = new FolderBrowserDialog(); if (dialog.ShowDialog(this) == DialogResult.OK) folder.Text = dialog.SelectedPath; };
         scan.Click += async (_, _) => await Scan();
         resources.Click += (_, _) => OpenResources(false);
         library.Click += (_, _) => OpenResources(true);
         openModel.Click += async (_, _) => await OpenModelFile();
         grid.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0 && scan.Enabled) OpenResources(false); };
-        search.TextChanged += (_, _) => Filter(); format.SelectedIndexChanged += (_, _) => Filter();
+        packageSearch.TextChanged += (_, _) => Filter(); format.SelectedIndexChanged += (_, _) => Filter();
+        search.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode != Keys.Enter) return;
+            e.Handled = e.SuppressKeyPress = true;
+            if (library.Enabled) OpenResources(true);
+        };
         grid.SelectionChanged += (_, _) =>
         {
             resources.Enabled = scan.Enabled && grid.CurrentRow?.DataBoundItem is Package;
@@ -125,10 +145,12 @@ public sealed class MainForm : Form
     void OpenResources(bool all)
     {
         if (result is null) return;
-        var paths = all ? result.Packages.Select(p => p.Ruta).ToArray()
-            : grid.CurrentRow?.DataBoundItem is Package package ? new[] { package.Ruta } : [];
+        var paths = result.Packages.Select(p => p.Ruta).ToArray();
+        string? selectedPackage = !all && grid.CurrentRow?.DataBoundItem is Package package ? package.Ruta : null;
+        if (!all && selectedPackage is null) return;
         if (paths.Length == 0) return;
-        using var window = new ResourceForm(paths);
+        session.State.GameFolder = folder.Text.Trim();
+        using var window = new ResourceForm(paths, session, all ? search.Text.Trim() : null, selectedPackage);
         window.ShowDialog(this);
     }
 
@@ -136,7 +158,7 @@ public sealed class MainForm : Form
     {
         if (result is null) return;
         var visible = result.Packages.Where(p => (format.SelectedIndex == 0 || p.Formato == format.Text)
-            && p.Ruta.Contains(search.Text.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
+            && p.Ruta.Contains(packageSearch.Text.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
         grid.DataSource = visible;
         status.Text = $"{visible.Count} visibles / {result.Packages.Count} paquetes · {result.Packages.Sum(p => p.Bytes) / 1073741824d:N2} GiB · {result.Errors.Count} errores";
     }

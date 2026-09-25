@@ -31,10 +31,12 @@ public static class Extraction
         return bytes;
     }
     public static ExtractionReport Run(IReadOnlyList<ResourceEntry> selected, string destination,
-        CancellationToken token = default, IProgress<ExtractionProgress>? progress = null)
+        CancellationToken token = default, IProgress<ExtractionProgress>? progress = null, bool organizeForMod = false)
     {
         string root = Path.GetFullPath(destination);
         SafeOutput.CheckDestination(root, selected.Select(r => r.Paquete).Distinct(StringComparer.OrdinalIgnoreCase));
+        if (organizeForMod && selected.Select(e => ModExport.Target(root, e)).Distinct(StringComparer.OrdinalIgnoreCase).Count() != selected.Count)
+            throw new InvalidDataException("Hay destinos repetidos. Elige una sola versión de cada recurso.");
         var report = new ExtractionReport(selected.Count, []);
         try
         {
@@ -54,7 +56,7 @@ public static class Extraction
                         {
                             var entry = current[(requested.Ruta, requested.Offset)].FirstOrDefault(r => SameEntry(r, requested))
                                 ?? throw new InvalidDataException("El índice cambió desde el listado. Vuelve a abrir la biblioteca.");
-                            report.Archivos.Add(ExtractOne(source, entry, root, token));
+                            report.Archivos.Add(ExtractOne(source, entry, root, token, organizeForMod));
                         }
                         catch (Exception ex) when (Expected(ex))
                         { report.Archivos.Add(new(requested.Ruta, requested.Paquete, null, "Error", ex.Message)); }
@@ -79,9 +81,9 @@ public static class Extraction
     static bool Expected(Exception ex) => ex is IOException or InvalidDataException or UnauthorizedAccessException
         or NotSupportedException or ArgumentException or ICSharpCode.SharpZipLib.SharpZipBaseException;
 
-    static ExtractionItem ExtractOne(Stream source, ResourceEntry entry, string root, CancellationToken token)
+    static ExtractionItem ExtractOne(Stream source, ResourceEntry entry, string root, CancellationToken token, bool organizeForMod)
     {
-        string target = SafeOutput.ResourcePath(root, entry);
+        string target = organizeForMod ? ModExport.Target(root, entry) : SafeOutput.ResourcePath(root, entry);
         SafeOutput.RejectLinks(target);
         if (File.Exists(target) || Directory.Exists(target)) return new(entry.Ruta, entry.Paquete, target, "Omitido", "El destino ya existe; no se sobrescribió.");
         SafeOutput.CreateDirectory(Path.GetDirectoryName(target)!);

@@ -15,6 +15,18 @@ public sealed class ModelForm : Form
     readonly ComboBox textures = new() { Dock = DockStyle.Top, DropDownStyle = ComboBoxStyle.DropDownList };
     readonly TrackBar frame = new() { Width = 220, Minimum = 0, Maximum = 0, TickStyle = TickStyle.None };
     readonly CheckBox wire = new() { Text = "Malla", AutoSize = true };
+    readonly CheckBox focusGeometry = new() { Text = "Enfocar geometría principal", AutoSize = true };
+    readonly CheckBox hideEffects = new() { Text = "Ocultar efectos", AutoSize = true };
+    readonly CheckBox firstPerson = new() { Text = "Primera persona (aprox.)", AutoSize = true };
+    readonly NumericUpDown fov = new() { Minimum = 40, Maximum = 120, Value = 90, Width = 60 };
+    readonly CheckBox bones = new() { Text = "Huesos (rayos X)", AutoSize = true };
+    readonly ComboBox camera = new() { Width = 140, DropDownStyle = ComboBoxStyle.DropDownList };
+    readonly ComboBox speed = new() { Width = 85, DropDownStyle = ComboBoxStyle.DropDownList };
+    readonly ComboBox background = new() { Width = 135, DropDownStyle = ComboBoxStyle.DropDownList };
+    readonly CheckBox nexonEffects = new() { Text = "Efectos Nexon (aprox.)", AutoSize = true, Checked = true };
+    readonly CheckBox additiveTexture = new() { Text = "Mezcla aditiva de esta textura (solo vista previa)", Dock = DockStyle.Bottom, Height = 34 };
+    readonly HashSet<int> additiveTextures = [];
+    bool updatingTexture;
     readonly Button play = new() { Text = "Reproducir", AutoSize = true };
     readonly Button prepare = new() { Text = "Preparar copia para prueba", AutoSize = true };
     readonly Label status = new() { Dock = DockStyle.Bottom, Height = 42, AutoEllipsis = true };
@@ -22,9 +34,12 @@ public sealed class ModelForm : Form
     readonly int[] variants;
     readonly Stopwatch clock = new();
     float yaw = .55f, pitch = -.2f, zoom = 1;
+    float panX, panY;
+    double animationFrame;
+    bool ticking, panning;
     Point? drag;
-    bool updating, preparing;
-    CancellationTokenSource? preparation;
+    bool updating;
+
 
     public ModelForm(ModelBundle bundle)
     {
@@ -32,16 +47,64 @@ public sealed class ModelForm : Form
         Text = "CSNZ Workshop — " + bundle.Main.Name;
         Size = new(1200, 850); MinimumSize = new(950, 650); StartPosition = FormStartPosition.CenterParent;
         Font = new("Segoe UI", 10);
-        var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 100, Padding = new(8), AutoScroll = true };
+        var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 195, Padding = new(8), AutoScroll = true };
         var reset = new Button { Text = "Centrar", AutoSize = true };
+        var compare = new Button { Text = "Comparar con modelo…", AutoSize = true };
+        compare.Click += async (_, _) => { timer.Stop(); play.Text = "Reproducir"; await ModelComparisonForm.Open(this, bundle); };
         toolbar.Controls.AddRange([sequences, play, frame, skins, wire, reset, body, variant, prepare]);
+        toolbar.Controls.Add(compare);
+        toolbar.Controls.Add(nexonEffects);
+        var previousFrame = new Button { Text = "◀ Fotograma", AutoSize = true };
+        var nextFrame = new Button { Text = "Fotograma ▶", AutoSize = true };
+        var capture = new Button { Text = "Guardar vista PNG…", AutoSize = true };
+        camera.Items.AddRange(["Vista libre", "Frontal", "Trasera", "Lateral derecha", "Lateral izquierda", "Superior"]); camera.SelectedIndex = 0;
+        speed.Items.AddRange(["0.25×", "0.5×", "1×", "2×"]); speed.SelectedIndex = 2;
+        background.Items.AddRange(["Fondo oscuro", "Fondo gris", "Fondo claro"]); background.SelectedIndex = 0;
+        toolbar.SetFlowBreak(nexonEffects, true);
+        toolbar.Controls.AddRange([camera, bones, background, previousFrame, nextFrame, speed, capture]);
+        toolbar.SetFlowBreak(capture, true);
+        toolbar.Controls.AddRange([focusGeometry, hideEffects, firstPerson, new Label { Text = "FOV horizontal", AutoSize = true, Padding = new(0, 5, 0, 0) }, fov]);
+        focusGeometry.CheckedChanged += (_, _) => DrawModel(); hideEffects.CheckedChanged += (_, _) => DrawModel();
+        fov.ValueChanged += (_, _) => DrawModel();
+        firstPerson.CheckedChanged += (_, _) =>
+        {
+            yaw = firstPerson.Checked ? 0 : .55f; pitch = firstPerson.Checked ? 0 : -.2f;
+            panX = panY = 0; zoom = 1; camera.SelectedIndex = 0; camera.Enabled = !firstPerson.Checked;
+            focusGeometry.Enabled = !firstPerson.Checked; DrawModel();
+        };
+        bones.CheckedChanged += (_, _) => DrawModel(); background.SelectedIndexChanged += (_, _) => DrawModel();
+        camera.SelectedIndexChanged += (_, _) =>
+        {
+            if (camera.SelectedIndex == 0) return;
+            (yaw, pitch) = camera.SelectedIndex switch { 1 => (0f, 0f), 2 => (MathF.PI, 0f), 3 => (MathF.PI / 2, 0f), 4 => (-MathF.PI / 2, 0f), _ => (0f, MathF.PI / 2) };
+            DrawModel();
+        };
+        previousFrame.Click += (_, _) => StepFrame(-1); nextFrame.Click += (_, _) => StepFrame(1);
+        speed.SelectedIndexChanged += (_, _) => { animationFrame = frame.Value; clock.Restart(); };
+        capture.Click += (_, _) =>
+        {
+            Pause();
+            if (view.Image is not null) ImageExport.Save(this, view.Image, [bundle.Main.Origin.Split(" :: ")[0]], "vista-modelo.png");
+        };
+        nexonEffects.CheckedChanged += (_, _) => { DrawTexture(); DrawModel(); };
         var tabs = new TabControl { Dock = DockStyle.Fill };
         var modelTab = new TabPage("Modelo 3D"); modelTab.Controls.Add(view);
         var textureTab = new TabPage("Texturas"); textureTab.Controls.Add(textureView); textureTab.Controls.Add(textures);
+        var saveTexture = new Button { Text = "Guardar textura PNG…", Dock = DockStyle.Bottom, Height = 36 };
+        saveTexture.Click += (_, _) => { if (textureView.Image is not null) ImageExport.Save(this, textureView.Image, [bundle.Main.Origin.Split(" :: ")[0]]); };
+        textureTab.Controls.Add(saveTexture);
+        textureTab.Controls.Add(additiveTexture);
+        additiveTexture.CheckedChanged += (_, _) =>
+        {
+            if (updatingTexture || textures.SelectedIndex < 0) return;
+            if (additiveTexture.Checked) additiveTextures.Add(textures.SelectedIndex); else additiveTextures.Remove(textures.SelectedIndex);
+            DrawModel();
+        };
         var details = new TextBox { Multiline = true, ReadOnly = true, Dock = DockStyle.Fill, ScrollBars = ScrollBars.Both, Text = bundle.Describe() };
         var diagnostic = new TabPage("Diagnóstico"); diagnostic.Controls.Add(details);
         tabs.TabPages.AddRange([modelTab, textureTab, diagnostic]);
         Controls.Add(tabs); Controls.Add(toolbar); Controls.Add(status);
+        UiTheme.Attach(this);
         updating = true;
         sequences.Items.Add("Pose de referencia");
         foreach (var sequence in bundle.Model.Sequences) sequences.Items.Add(sequence.Name);
@@ -60,35 +123,52 @@ public sealed class ModelForm : Form
             frame.Maximum = sequences.SelectedIndex > 0 ? bundle.Model.Sequences[sequences.SelectedIndex - 1].Frames - 1 : 0;
             frame.Value = 0; DrawModel();
         };
-        skins.SelectedIndexChanged += (_, _) => DrawModel(); wire.CheckedChanged += (_, _) => DrawModel(); frame.ValueChanged += (_, _) => DrawModel();
+        skins.SelectedIndexChanged += (_, _) => DrawModel(); wire.CheckedChanged += (_, _) => DrawModel();
+        frame.ValueChanged += (_, _) => { if (!ticking) { animationFrame = frame.Value; clock.Restart(); } DrawModel(); };
+        frame.MouseDown += (_, _) => Pause();
         body.SelectedIndexChanged += (_, _) => FillVariants();
         variant.SelectedIndexChanged += (_, _) => { if (!updating && body.SelectedIndex >= 0 && variant.SelectedIndex >= 0) { variants[body.SelectedIndex] = variant.SelectedIndex; DrawModel(); } };
         textures.SelectedIndexChanged += (_, _) => DrawTexture();
-        view.MouseDown += (_, e) => { if (e.Button == MouseButtons.Left) { drag = e.Location; view.Capture = true; } view.Focus(); };
+        view.MouseDown += (_, e) => { if (e.Button is MouseButtons.Left or MouseButtons.Right or MouseButtons.Middle) { panning = e.Button != MouseButtons.Left; drag = e.Location; view.Capture = true; } view.Focus(); };
         view.MouseUp += (_, _) => { drag = null; view.Capture = false; };
         view.MouseMove += (_, e) =>
         {
-            if (drag is Point previous) { yaw += (e.X - previous.X) * .01f; pitch = Math.Clamp(pitch + (e.Y - previous.Y) * .01f, -1.5f, 1.5f); drag = e.Location; DrawModel(); }
+            if (drag is Point previous)
+            {
+                if (panning) { panX += (e.X - previous.X) / (float)Math.Max(1, view.Width); panY += (e.Y - previous.Y) / (float)Math.Max(1, view.Height); }
+                else { camera.SelectedIndex = 0; yaw += (e.X - previous.X) * .01f; pitch = Math.Clamp(pitch + (e.Y - previous.Y) * .01f, -MathF.PI / 2, MathF.PI / 2); }
+                drag = e.Location; DrawModel();
+            }
         };
         view.MouseWheel += (_, e) => { zoom = Math.Clamp(zoom * MathF.Pow(1.1f, e.Delta / 120f), .05f, 20); DrawModel(); };
-        reset.Click += (_, _) => { yaw = .55f; pitch = -.2f; zoom = 1; DrawModel(); };
+        reset.Click += (_, _) => { camera.SelectedIndex = 0; yaw = firstPerson.Checked ? 0 : .55f; pitch = firstPerson.Checked ? 0 : -.2f; zoom = 1; panX = panY = 0; DrawModel(); };
         play.Click += (_, _) =>
         {
             if (sequences.SelectedIndex <= 0) return;
             if (timer.Enabled) { timer.Stop(); play.Text = "Reproducir"; }
-            else { frame.Value = 0; clock.Restart(); timer.Start(); play.Text = "Pausar"; }
+            else { animationFrame = frame.Value; clock.Restart(); timer.Start(); play.Text = "Pausar"; }
         };
         timer.Tick += (_, _) =>
         {
             if (sequences.SelectedIndex <= 0) return;
             var sequence = bundle.Model.Sequences[sequences.SelectedIndex - 1];
-            frame.Value = (int)(clock.Elapsed.TotalSeconds * sequence.Fps) % sequence.Frames;
+            double rate = speed.SelectedIndex switch { 0 => .25, 1 => .5, 3 => 2, _ => 1 };
+            animationFrame = (animationFrame + clock.Elapsed.TotalSeconds * sequence.Fps * rate) % sequence.Frames;
+            clock.Restart(); ticking = true;
+            try { frame.Value = (int)animationFrame; } finally { ticking = false; }
         };
         prepare.Click += async (_, _) => await Prepare();
         Shown += (_, _) => { DrawModel(); DrawTexture(); };
         ResizeEnd += (_, _) => DrawModel();
-        FormClosing += (_, _) => { timer.Stop(); preparation?.Cancel(); };
+        FormClosing += (_, _) => { timer.Stop(); };
+        tabs.SelectedIndexChanged += (_, _) => { if (tabs.SelectedIndex != 0) Pause(); };
         FormClosed += (_, _) => { timer.Dispose(); view.Image?.Dispose(); textureView.Image?.Dispose(); };
+    }
+
+    void Pause() { timer.Stop(); play.Text = "Reproducir"; }
+    void StepFrame(int direction)
+    {
+        Pause(); frame.Value = Math.Clamp(frame.Value + direction, 0, frame.Maximum);
     }
 
     void FillVariants()
@@ -109,9 +189,9 @@ public sealed class ModelForm : Form
         try
         {
             var bitmap = ModelRenderer.Render(bundle.Model, view.Width, view.Height,
-                new(yaw, pitch, zoom, sequences.SelectedIndex - 1, frame.Value, skins.SelectedIndex, variants, wire.Checked));
+                new(yaw, pitch, zoom, sequences.SelectedIndex - 1, frame.Value, skins.SelectedIndex, variants, wire.Checked, AdditiveTextures: additiveTextures.ToArray(), NexonEffects: nexonEffects.Checked, PanX: panX, PanY: panY, ShowBones: bones.Checked, FocusGeometry: focusGeometry.Checked, HideEffects: hideEffects.Checked, FirstPerson: firstPerson.Checked, FieldOfView: (float)fov.Value, Background: background.SelectedIndex switch { 1 => unchecked((int)0xff666666), 2 => unchecked((int)0xffe4e9ef), _ => unchecked((int)0xff202833) }));
             var old = view.Image; view.Image = bitmap; old?.Dispose();
-            status.Text = $"Arrastra para girar · Rueda para zoom · Fotograma {frame.Value}/{frame.Maximum} · Materiales aproximados";
+            status.Text = $"Izquierdo: girar · Derecho/central: desplazar · Rueda: zoom · Fotograma {frame.Value}/{frame.Maximum} · Materiales aproximados";
         }
         catch (Exception ex)
         {
@@ -123,26 +203,22 @@ public sealed class ModelForm : Form
 
     void DrawTexture()
     {
+        updatingTexture = true;
+        bool declared = textures.SelectedIndex >= 0 && ((bundle.Model.Textures[textures.SelectedIndex].Flags & 0x20) != 0
+            || nexonEffects.Checked && ModelRenderer.IsNexonEffect(bundle.Model.Textures[textures.SelectedIndex]));
+        additiveTexture.Enabled = textures.SelectedIndex >= 0 && !declared;
+        additiveTexture.Checked = declared || additiveTextures.Contains(textures.SelectedIndex);
+        updatingTexture = false;
         var old = textureView.Image;
         textureView.Image = textures.SelectedIndex >= 0 ? ModelRenderer.TextureBitmap(bundle.Model.Textures[textures.SelectedIndex]) : null;
         old?.Dispose();
     }
 
-    async Task Prepare()
+    Task Prepare()
     {
-        if (preparing) return;
-        using var dialog = new FolderBrowserDialog { Description = "Guardar una copia para probar en CS 1.6, con archivos compañeros e informe. No se instala en el juego.", UseDescriptionForTitle = true };
-        if (dialog.ShowDialog(this) != DialogResult.OK) return;
-        preparing = true; prepare.Enabled = false; timer.Stop(); play.Text = "Reproducir";
-        using var operation = new CancellationTokenSource(); preparation = operation;
-        status.Text = "Validando animaciones y preparando la copia…";
-        try
-        {
-            string output = await Task.Run(() => bundle.Prepare(dialog.SelectedPath, operation.Token));
-            if (!IsDisposed) MessageBox.Show(this, "Copia preparada en:\r\n" + output + "\r\n\r\nConsulta preparacion.json. Falta probarla en CS 1.6.", "Preparación terminada");
-        }
-        catch (OperationCanceledException) { }
-        catch (Exception ex) { if (!IsDisposed) MessageBox.Show(this, ex.Message, "No se pudo preparar"); }
-        finally { preparing = false; preparation = null; if (!IsDisposed) { prepare.Enabled = true; DrawModel(); } }
+        timer.Stop(); play.Text = "Reproducir";
+        using var dialog = new PreparationForm(bundle);
+        dialog.ShowDialog(this);
+        return Task.CompletedTask;
     }
 }

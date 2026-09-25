@@ -8,9 +8,13 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="SharpZipLib" Version="1.4.2" />
+    <PackageReference Include="NLayer" Version="3.0.0" />
+    <PackageReference Include="Pfim" Version="0.11.4" />
     <InternalsVisibleTo Include="CSNZWorkshop.Checks" />
     <None Include="..\LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\THIRD_PARTY.md" Link="THIRD_PARTY.md" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\licenses\SharpZipLib-MIT.txt" Link="licenses\SharpZipLib-MIT.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\licenses\NLayer-MIT.txt" Link="licenses\NLayer-MIT.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\licenses\Pfim-MIT.txt" Link="licenses\Pfim-MIT.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

@@ -9,6 +9,7 @@ public record StudioTriangle(StudioCorner A, StudioCorner B, StudioCorner C, int
 public record StudioPart(string Name, Vector3[] Vertices, byte[] BoneIndices, StudioTriangle[] Triangles);
 public record StudioBody(string Name, StudioPart[] Variants);
 public record StudioSequence(string Name, float Fps, int Frames, int Blends, int AnimationOffset, int Group);
+public record StudioEvent(int Sequence, int Frame, int Code, string Options);
 
 public sealed class StudioModel
 {
@@ -21,6 +22,7 @@ public sealed class StudioModel
     public required short[][] Skins { get; init; }
     public required string[] GroupNames { get; init; }
     public List<string> Warnings { get; } = [];
+    public List<StudioEvent> Events { get; } = [];
     public Dictionary<int, byte[]> ExternalGroups { get; } = [];
 
     public static StudioModel Parse(byte[] data, StudioModel? textureCompanion = null)
@@ -90,6 +92,7 @@ public sealed class StudioModel
         string[] groups = Enumerable.Range(0, groupCount).Select(i => r.Text(r.Int(176) + i * 104 + 32, 64)).ToArray();
         int seqCount = r.Table(r.Int(164), r.Int(168), 176, 4096);
         var sequences = new StudioSequence[seqCount];
+        var sequenceEvents = new List<StudioEvent>();
         for (int i = 0; i < seqCount; i++)
         {
             int at = r.Int(168) + i * 176;
@@ -98,7 +101,12 @@ public sealed class StudioModel
             if (frames < 1 || frames > 100000 || blends < 1 || blends > 64 || group < 0 || group >= groupCount || fps < 0 || fps > 1000)
                 throw new InvalidDataException("Descriptor de animación inválido.");
             int events = r.Table(r.Int(at + 48), r.Int(at + 52), 76, 4096);
-            for (int e = 0; e < events; e++) _ = r.Text(r.Int(at + 52) + e * 76 + 12, 64);
+            if (sequenceEvents.Count + events > 100000) throw new InvalidDataException("Demasiados eventos para analizar el modelo.");
+            for (int e = 0; e < events; e++)
+            {
+                int eventAt = r.Int(at + 52) + e * 76;
+                sequenceEvents.Add(new(i, r.Int(eventAt), r.Int(eventAt + 4), r.Text(eventAt + 12, 64)));
+            }
             if (group == 0) r.Table(boneCount * blends, r.Int(at + 124), 12, 32768);
             sequences[i] = new(r.Text(at, 32), fps, frames, blends, r.Int(at + 124), group);
         }
@@ -165,6 +173,7 @@ public sealed class StudioModel
             bodies[b] = new(r.Text(body, 64), variants);
         }
         var result = new StudioModel { Data = data, Name = r.Text(8, 64), Bones = bones, Textures = textures, Bodies = bodies, Sequences = sequences, Skins = skins, GroupNames = groups };
+        result.Events.AddRange(sequenceEvents);
         if (bones.Length > 128) result.Warnings.Add("Supera 128 huesos: requiere recompilación/reducción para el formato clásico.");
         if (bodies.Any(b => b.Variants.Any(v => v.Vertices.Length > 2048))) result.Warnings.Add("Hay submodelos con más de 2048 vértices; revisar límites del cliente destino.");
         if (textures.Length > 100) result.Warnings.Add("Más de 100 texturas: revisar límites del cliente destino.");

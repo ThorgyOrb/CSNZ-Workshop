@@ -92,7 +92,7 @@ public sealed class ModelBundle
             .. Model.Warnings,
             .. Missing.Select(m => "Falta dependencia: " + m),
             "Comprueba animaciones de disparo/recarga, sonidos y límites del cliente antes de instalar."];
-        return string.Join(Environment.NewLine, lines);
+        return string.Join(Environment.NewLine, lines) + "\r\n\r\n" + CompatibilityReport.Analyze(this).Describe();
     }
 
     public string Prepare(string destination, CancellationToken token = default)
@@ -126,6 +126,7 @@ public sealed class ModelBundle
                     Estado = "Candidato para prueba; no instalado ni probado en CS 1.6",
                     Origen = Main.Origin, VersionOriginal = Main.OriginalVersion, VersionSalida = 10,
                     Diagnostico = Describe(),
+                    RevisionEstructuralCS16 = CompatibilityReport.Analyze(this),
                     Animaciones = Model.Sequences.Select(s => new { s.Name, s.Frames, s.Fps, s.Blends }),
                     Archivos = new[] { Main }.Concat(Companions).Select(a => new { a.Name, Bytes = a.Data.Length, SHA256 = Convert.ToHexString(SHA256.HashData(a.Data)) }),
                     Pendiente = "No se reordenan secuencias, no se reducen polígonos ni se incluyen sonidos externos automáticamente. Los blends adicionales no se validan."

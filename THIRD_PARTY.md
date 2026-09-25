@@ -31,6 +31,26 @@ CSNZ Workshop integra código adaptado de proyectos GPL. La aplicación combinad
 - Licencia: MIT. Texto en `licenses/SharpZipLib-MIT.txt`.
 - Biblioteca integrada para descomprimir BZip2; no es un programa extractor externo. La primera restauración necesita descargar el paquete; después se utiliza la copia local de `artifacts/packages`.
 
+## NLayer 3.0.0
+
+- Fuente: https://github.com/naudio/NLayer
+- Paquete NuGet: https://www.nuget.org/packages/NLayer/3.0.0
+- Revisión del paquete: `046c7ce422970f8f0f0bc205d6c6341bcb7debf1`.
+- Licencia: MIT. Texto en `licenses/NLayer-MIT.txt`.
+- Decodificador MP3 integrado para la vista previa. Genera PCM temporal; la extracción conserva el MP3 original. No requiere un reproductor externo ni el controlador MCI MPEG de Windows.
+
+## Pfim 0.11.4
+
+- Fuente: https://github.com/nickbabcock/Pfim
+- Paquete: https://www.nuget.org/packages/Pfim/0.11.4
+- Revisión: `0a00d8152ca4dc0e0a5821c6b8fd5261fca1e84d`.
+- Copyright: Nick Babcock. Licencia MIT, texto en `licenses/Pfim-MIT.txt`.
+- Decodifica vistas previas TGA y DDS; se limita el tamaño de imagen y el presupuesto de asignación. El lector WAD3 es propio, a partir de las estructuras de archivo descritas en https://github.com/ValveSoftware/halflife/blob/master/utils/common/wadlib.h.
+
 El lector MDL (`Models/StudioModel.cs`), el rasterizador (`Models/ModelRenderer.cs`), el visor y el informe por lotes son código propio de CSNZ Workshop, escritos a partir del formato público `studiomodel` de GoldSrc.
 
+El lector `Media/SpriteClip.cs` es una implementación propia del formato IDSP v2 documentado por Valve en https://github.com/ValveSoftware/halflife/blob/master/utils/sprgen/spritegn.h y https://github.com/ValveSoftware/halflife/blob/master/devtools/image_to_spr.py. No se incorpora código de esos archivos. La salida de audio utiliza la API MCI de Windows (`winmm.dll`): https://learn.microsoft.com/en-us/previous-versions/dd757161(v=vs.85).
+
 Las modificaciones y los nuevos lectores de CSNZ Workshop se realizaron en 2026. Se conservan las licencias de los componentes originales. Al redistribuir la aplicación, incluye estos avisos y el código fuente correspondiente conforme a GPL-3.0.
+
+`Models/CompatibilityReport.cs` utiliza como perfil orientativo las constantes públicas de https://github.com/ValveSoftware/halflife/blob/master/engine/studio.h. `Models/RelatedResources.cs` reconoce el significado del evento de sonido 5004 descrito en https://github.com/ValveSoftware/halflife/blob/master/cl_dll/entity.cpp. Ambas implementaciones son propias y no incorporan código del SDK. El perfil no afirma compatibilidad garantizada con CS 1.6.

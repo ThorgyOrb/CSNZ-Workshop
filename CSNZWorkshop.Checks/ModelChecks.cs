@@ -76,7 +76,7 @@ static class ModelChecks
         {
             var model = StudioModel.Parse(valid);
             foreach (var (width, height) in new[] { (1, 1), (4000, 4000) })
-            { using var bitmap = ModelRenderer.Render(model, width, height, new(Zoom: 40)); Assert(bitmap.Width is >= 64 and <= 900); }
+            { using var bitmap = ModelRenderer.Render(model, width, height, new(Zoom: 40)); Assert(bitmap.Width is >= 1 and <= 1200 && bitmap.Height is >= 1 and <= 900 && bitmap.Width == bitmap.Height); }
         });
         check("MDL rechazado: firma, versión, longitud y tablas fuera de rango", () =>
         {

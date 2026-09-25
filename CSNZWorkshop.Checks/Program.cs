@@ -2,6 +2,58 @@ using System.Text;
 using CSNZWorkshop.Archives;
 using ICSharpCode.SharpZipLib.BZip2;
 
+if (args.Length == 3 && args[0] is "--additive-model" or "--inspect-effects")
+{
+    var inventory = CSNZWorkshop.Inventory.Scan(args[1]);
+    var index = ArchiveIndex.Build(inventory.Packages.Select(p => p.Ruta));
+    var entry = index.Recursos.First(r => Path.GetFileName(r.Ruta).Equals(args[2], StringComparison.OrdinalIgnoreCase));
+    var bundle = CSNZWorkshop.Models.ModelBundle.FromArchive(entry, index.Recursos);
+    Console.WriteLine(entry.Ruta);
+    foreach (var group in bundle.Model.Textures.GroupBy(t => t.Flags)) Console.WriteLine($"Flags 0x{group.Key:X}: {group.Count()} texturas");
+    for (int i = 0; i < bundle.Model.Textures.Length; i++) Console.WriteLine($"{i}: {bundle.Model.Textures[i].Name}");
+    if (args[0] == "--inspect-effects")
+    {
+        var model = bundle.Model;
+        var effectBones = new HashSet<int>();
+        foreach (var part in model.Bodies.SelectMany(b => b.Variants))
+            foreach (var triangle in part.Triangles)
+                if (model.Skins.Any(s => triangle.Skin < s.Length && s[triangle.Skin] >= 0 && s[triangle.Skin] < model.Textures.Length
+                    && ((model.Textures[s[triangle.Skin]].Flags & 0x20) != 0 || CSNZWorkshop.Models.ModelRenderer.IsNexonEffect(model.Textures[s[triangle.Skin]]))))
+                    foreach (var corner in new[] { triangle.A, triangle.B, triangle.C }) effectBones.Add(part.BoneIndices[corner.Vertex]);
+        Console.WriteLine("Huesos de efectos: " + string.Join(", ", effectBones.Select(i => $"{i}:{model.Bones[i].Name}")));
+        Console.WriteLine("Compañeros faltantes: " + string.Join(", ", bundle.Missing));
+        for (int sequence = 0; sequence < model.Sequences.Length; sequence++)
+        {
+            var seq = model.Sequences[sequence];
+            try
+            {
+                var start = model.Pose(sequence, 0); var moving = new HashSet<int>();
+                for (int frame = 1; frame < seq.Frames; frame++)
+                {
+                    var pose = model.Pose(sequence, frame);
+                    foreach (int bone in effectBones) if (pose[bone] != start[bone]) moving.Add(bone);
+                }
+                Console.WriteLine($"Secuencia {sequence}: {seq.Name}, {seq.Frames} frames, {seq.Fps} FPS, {seq.Blends} blends; huesos de efectos con cambio: {string.Join(",", moving)}");
+            }
+            catch (Exception ex) { Console.WriteLine($"Secuencia {sequence}: {seq.Name}: {ex.Message}"); }
+        }
+        foreach (var ev in model.Events) Console.WriteLine($"Evento: secuencia={ev.Sequence}, frame={ev.Frame}, código={ev.Code}, opciones={ev.Options}");
+        Console.WriteLine($"Total eventos: {model.Events.Count}; inspección de poses: primer blend; no evalúa materiales ni código del cliente.");
+        return;
+    }
+    Directory.CreateDirectory("artifacts");
+    using var corrected = CSNZWorkshop.Models.ModelRenderer.Render(bundle.Model, 900, 700, new(Sequence: 0));
+    corrected.Save("artifacts/additive-model-after.png");
+    using var focused = CSNZWorkshop.Models.ModelRenderer.Render(bundle.Model, 900, 700, new(Sequence: 0, FocusGeometry: true, HideEffects: true));
+    focused.Save("artifacts/model-focused.png");
+    using var firstPerson = CSNZWorkshop.Models.ModelRenderer.Render(bundle.Model, 900, 700, new(0, 0, Sequence: 0, FirstPerson: true, HideEffects: true));
+    firstPerson.Save("artifacts/model-first-person.png");
+    for (int i = 0; i < bundle.Model.Textures.Length; i++) bundle.Model.Textures[i] = bundle.Model.Textures[i] with { Flags = bundle.Model.Textures[i].Flags & ~0x20 };
+    using var before = CSNZWorkshop.Models.ModelRenderer.Render(bundle.Model, 900, 700, new(Sequence: 0, NexonEffects: false));
+    before.Save("artifacts/additive-model-before.png");
+    return;
+}
+
 var root = Path.Combine(Path.GetTempPath(), "CSNZWorkshop-checks-" + Guid.NewGuid());
 Directory.CreateDirectory(root);
 int passed = 0;
@@ -93,6 +145,10 @@ try
     ExtractionChecks.Run(root, args.Length == 1 ? args[0] : null, Check);
     PakChecks.Run(Check);
     ModelChecks.Run(root, args.Length == 1 ? args[0] : null, Check);
+    MediaChecks.Run(root, Check);
+    AnalysisChecks.Run(root, Check);
+    WorkflowChecks.Run(root, Check);
+    EnhancementChecks.Run(root, Check);
     Console.WriteLine($"{passed} comprobaciones correctas.");
 }
 finally
