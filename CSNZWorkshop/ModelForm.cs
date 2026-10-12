@@ -235,6 +235,8 @@ public sealed class ModelForm : Form
                 updating = false;
             }
             status.Text = $"Izquierdo: girar · Derecho/central: desplazar · Rueda: zoom · Fotograma {frame.Value}/{frame.Maximum} · Materiales aproximados" + (simulateEffects.Checked ? $" · Simulación: {cyclingGroups.Count} grupos" : "");
+            int unresolvedTextures = bundle.Model.Textures.Count(t => t.ExternalPlaceholder);
+            if (unresolvedTextures > 0) status.Text = $"Faltan {unresolvedTextures} texturas externas o su origen es ambiguo. Consulta Diagnóstico. " + status.Text;
         }
         catch (Exception ex)
         {

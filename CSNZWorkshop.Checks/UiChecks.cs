@@ -5,6 +5,24 @@ using CSNZWorkshop.Models;
 
 static class UiChecks
 {
+    public static void VerifyWeaponExport(ModelBundle bundle, string? capture = null) => OnUi(() =>
+    {
+        using var form = new UnityExportForm(bundle) { ShowInTaskbar = false, Opacity = 0 };
+        form.Show(); Application.DoEvents(); var controls = Descendants(form).ToArray();
+        var list = controls.OfType<CheckedListBox>().Single();
+        int suggested = WeaponGeometry.Sections(bundle.Model).Count(s => s.SuggestedExclude);
+        controls.OfType<Button>().Single(b => b.Text == "Solo arma (sugerido)").PerformClick(); Application.DoEvents();
+        if (list.CheckedItems.Count != suggested) throw new Exception("Suggested hands/arms selection incorrect");
+        var seq = controls.OfType<ComboBox>().Single(c => c.Items.Contains("Pose de referencia")); seq.SelectedIndex = 1; Application.DoEvents();
+        var track = controls.OfType<TrackBar>().Single(); track.Value = Math.Min(5, track.Maximum); Application.DoEvents();
+        var picture = controls.OfType<PictureBox>().Single(); if (picture.Image == null) throw new Exception("Weapon preview missing");
+        if (capture is not null) { using var image = new Bitmap(form.Width, form.Height); form.DrawToBitmap(image, new Rectangle(0, 0, image.Width, image.Height)); image.Save(capture); }
+        controls.OfType<Button>().Single(b => b.Text == "Modelo completo").PerformClick(); Application.DoEvents();
+        if (list.CheckedItems.Count != 0) throw new Exception("Full geometry not restored");
+        for (int i = 0; i < list.Items.Count; i++) list.SetItemChecked(i, true); Application.DoEvents();
+        if (controls.OfType<Button>().Single(b => b.Text == "Elegir destino y exportar…").Enabled) throw new Exception("Empty export enabled");
+        form.Close();
+    });
     public static void VerifyEffectCycle(ModelBundle bundle) => OnUi(() =>
     {
         using var form = new ModelForm(bundle) { ShowInTaskbar = false, Opacity = 0 };

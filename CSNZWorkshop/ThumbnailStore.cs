@@ -18,7 +18,7 @@ public sealed class ThumbnailStore
             })));
     }
     static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
-    string PathFor(ResourceEntry entry) => Path.Combine(root, Hash($"v2|{generation}|{entry.Paquete}|{entry.Ruta}|{entry.Offset}|{entry.Bytes}") + ".png");
+    string PathFor(ResourceEntry entry) => Path.Combine(root, Hash($"v3|{generation}|{entry.Paquete}|{entry.Ruta}|{entry.Offset}|{entry.Bytes}") + ".png");
     public Bitmap? Read(ResourceEntry entry)
     {
         try

@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Text.Json;
+using System.Security.Cryptography;
 using CSNZ.UnityBridge;
 using CSNZWorkshop.Archives;
 
@@ -19,9 +20,18 @@ public static class UnityModelExporter
     static float[] V(Vector3 v) => [v.X, v.Y, v.Z];
     static float[] Q(Quaternion q) => [q.X, q.Y, q.Z, q.W];
 
-    public static ModelData Build(StudioModel model, float metersPerUnit = .0254f, CancellationToken token = default)
+    public static ModelData Build(StudioModel model, float metersPerUnit = .0254f, CancellationToken token = default,
+        IReadOnlyCollection<GeometrySectionKey>? excludedGeometry = null)
     {
         token.ThrowIfCancellationRequested();
+        var sections = WeaponGeometry.Sections(model);
+        var excluded = excludedGeometry?.ToHashSet() ?? [];
+        if (excluded.Count > 0)
+        {
+            model = WeaponGeometry.Apply(model, excluded);
+            if (!model.Bodies.Any(b => b.Variants.Any(v => v.Triangles.Length > 0))) throw new InvalidDataException("La selección elimina toda la geometría. Conserva al menos una parte del arma.");
+        }
+        if (model.Textures.Any(t => t.ExternalPlaceholder)) throw new InvalidDataException("Hay texturas externas sin resolver. Abre el modelo con su biblioteca o sus BMP antes de exportar a Unity.");
         if (!float.IsFinite(metersPerUnit) || metersPerUnit <= 0) throw new ArgumentOutOfRangeException(nameof(metersPerUnit));
         long samples = model.Sequences.Sum(s => (long)s.Frames * s.Blends * model.Bones.Length);
         if (samples > 2000000) throw new InvalidDataException("La exportación supera dos millones de poses de huesos. Reduce el modelo o las secuencias.");
@@ -101,20 +111,23 @@ public static class UnityModelExporter
             version = 1, name = model.Name, axes = "Unity: +X right, +Y up, +Z forward; source (-Y,Z,X); winding reversed", units = "meters", metersPerUnit = metersPerUnit,
             bones = model.Bones.Select((b, i) => new BoneData { id = i, name = b.Name, parent = b.Parent,
                 position = V(ConvertDirection(reference[i].Position) * metersPerUnit), rotation = Q(ConvertRotation(reference[i].Rotation)) }).ToArray(),
-            textures = model.Textures.Select((t, i) => new TextureData { id = i, name = t.Name, width = t.Width, height = t.Height, flags = t.Flags, file = $"textures/texture_{i:D4}.png" }).ToArray(),
+            textures = model.Textures.Select((t, i) => new TextureData { id = i, name = t.Name, width = t.Width, height = t.Height, flags = t.Flags, source = t.Source ?? "MDL embedded", file = $"textures/texture_{i:D4}.png" }).ToArray(),
             bodies = model.Bodies.Select((b, i) => new BodyData { id = i, name = b.Name, variants = b.Variants.Select(p => p.Name).ToArray() }).ToArray(),
             skins = model.Skins.Select(s => new SkinData { textures = s.Select(t => (int)t).ToArray() }).ToArray(),
             meshes = meshes.ToArray(), animations = clips.ToArray(),
+            geometrySections = sections.Select(s => new GeometrySectionData { body = s.Key.Body, variant = s.Key.Variant, slot = s.Key.Slot,
+                name = s.Label, reason = s.Reason, triangles = s.Triangles, suggestedExclude = s.SuggestedExclude, excluded = excluded.Contains(s.Key) }).ToArray(),
             attachments = model.Attachments.Select((a, i) => new AttachmentData { id = i, name = a.Name, bone = a.Bone,
                 position = V(ConvertDirection(a.Position) * metersPerUnit), orientation = a.Orientation.SelectMany(v => V(ConvertDirection(v))).ToArray() }).ToArray(),
             events = model.Events.Select(e => new EventData { sequence = e.Sequence, frame = e.Frame, code = e.Code, options = e.Options }).ToArray()
         };
     }
 
-    public static string Export(ModelBundle bundle, string destination, float metersPerUnit = .0254f, CancellationToken token = default)
+    public static string Export(ModelBundle bundle, string destination, float metersPerUnit = .0254f, CancellationToken token = default,
+        IReadOnlyCollection<GeometrySectionKey>? excludedGeometry = null)
     {
         if (bundle.Missing.Count > 0) throw new InvalidDataException("Faltan compañeros: " + string.Join(", ", bundle.Missing));
-        var data = Build(bundle.Model, metersPerUnit, token);
+        var data = Build(bundle.Model, metersPerUnit, token, excludedGeometry);
         SafeOutput.CheckDestination(destination, [bundle.Main.Origin.Split(" :: ")[0]]);
         string folder = Path.Combine(Path.GetFullPath(destination), "unity-model-" + Guid.NewGuid().ToString("N"));
         SafeOutput.CreateDirectory(Path.Combine(folder, "textures"));
@@ -129,12 +142,22 @@ public static class UnityModelExporter
         try
         {
             foreach (var texture in data.textures)
-                Write(texture.file, stream => { using var bitmap = ModelRenderer.TextureBitmap(bundle.Model.Textures[texture.id]); bitmap.Save(stream, System.Drawing.Imaging.ImageFormat.Png); });
+                Write(texture.file, stream =>
+                {
+                    using var bitmap = ModelRenderer.TextureBitmap(bundle.Model.Textures[texture.id]);
+                    using var png = new MemoryStream(); bitmap.Save(png, System.Drawing.Imaging.ImageFormat.Png);
+                    byte[] bytes = png.ToArray(); texture.sha256 = Convert.ToHexString(SHA256.HashData(bytes)); stream.Write(bytes);
+                });
             Write("model.json", stream => JsonSerializer.Serialize(stream, data, Json));
             Write("export-report.json", stream => JsonSerializer.Serialize(stream, new
             {
                 version = 1, origin = bundle.Main.Origin, sourceVersion = bundle.Main.OriginalVersion,
                 sequences = bundle.Model.Sequences.Select((s, i) => new { id = i, s.Name, s.Fps, s.Frames, s.Blends, s.Flags }),
+                textures = data.textures,
+                geometrySelection = new { excluded = data.geometrySections.Where(s => s.excluded), originalTriangles = data.geometrySections.Sum(s => s.triangles),
+                    retainedTriangles = data.geometrySections.Where(s => !s.excluded).Sum(s => s.triangles),
+                    bonesPreserved = data.bones.Length, clipsPreserved = data.animations.Length,
+                    note = "Solo se elimina geometría. Se conservan todos los huesos y clips; los brazos del jugador y la lógica del arma necesitan adaptación para 7 Days to Die." },
                 cornersWithDifferentNormalBone = data.meshes.Sum(m => m.boneIndices.Where((b, i) => b != m.normalBoneIndices[i]).Count()),
                 warnings = bundle.Model.Warnings.Concat(bundle.Model.Sequences.Where(s => s.Fps == 0).Select(s => $"Secuencia omitida por FPS cero: {s.Name}")),
                 limitations = new[] { "Eventos conservados como metadatos; requieren adaptación manual.",

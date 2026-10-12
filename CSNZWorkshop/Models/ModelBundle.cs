@@ -11,6 +11,7 @@ public sealed class ModelBundle
     public required StudioModel Model { get; init; }
     public required ModelAsset Main { get; init; }
     public List<ModelAsset> Companions { get; } = [];
+    public List<ModelAsset> ExternalTextures { get; } = [];
     public List<string> Missing { get; } = [];
 
     public static ModelBundle FromArchive(ResourceEntry entry, IReadOnlyList<ResourceEntry> library, CancellationToken token = default)
@@ -26,7 +27,14 @@ public sealed class ModelBundle
             if (preferred.Length == 1) return Extraction.ReadResource(preferred[0], token);
             return candidates.Length == 1 ? Extraction.ReadResource(candidates[0], token) : null;
         }
-        return Load(raw, Path.GetFileName(path), entry.Paquete + " :: " + entry.Ruta, Resolve);
+        ModelAsset? ResolveTexture(string filename)
+        {
+            var candidates = ExternalModelTextures.Candidates(entry, filename, library);
+            if (candidates.Length != 1) return null;
+            var texture = candidates[0];
+            return new(filename, Extraction.ReadResource(texture, token), 0, texture.Paquete + " :: " + texture.Ruta);
+        }
+        return Load(raw, Path.GetFileName(path), entry.Paquete + " :: " + entry.Ruta, Resolve, ResolveTexture, token);
     }
 
     public static ModelBundle FromFile(string path)
@@ -38,14 +46,28 @@ public sealed class ModelBundle
             if (stream.Length > 128 * 1024 * 1024) throw new InvalidDataException("Modelo demasiado grande (máximo 128 MiB).");
             byte[] bytes = new byte[(int)stream.Length]; stream.ReadExactly(bytes); return bytes;
         }
+        ModelAsset? ResolveTexture(string filename)
+        {
+            var roots = new List<string> { directory };
+            for (var parent = new DirectoryInfo(directory); parent is not null; parent = parent.Parent)
+                if (parent.Name.Equals("models", StringComparison.OrdinalIgnoreCase)) { roots.Add(parent.FullName); break; }
+            foreach (string root in roots.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                string texture = Path.Combine(root, "texture", ExternalModelTextures.Filename(filename));
+                if (File.Exists(texture)) return new(filename, Read(texture), 0, texture);
+            }
+            string sibling = Path.Combine(directory, ExternalModelTextures.Filename(filename));
+            return File.Exists(sibling) ? new(filename, Read(sibling), 0, sibling) : null;
+        }
         return Load(Read(path), Path.GetFileName(path), Path.GetFullPath(path), filename =>
         {
             string sibling = Path.Combine(directory, filename);
             return File.Exists(sibling) ? Read(sibling) : null;
-        });
+        }, ResolveTexture);
     }
 
-    public static ModelBundle Load(byte[] raw, string filename, string origin, Func<string, byte[]?> resolve)
+    public static ModelBundle Load(byte[] raw, string filename, string origin, Func<string, byte[]?> resolve,
+        Func<string, ModelAsset?>? resolveTexture = null, CancellationToken token = default)
     {
         var header = new ModelBytes(raw); header.Range(0, 244);
         int version = header.Int(4);
@@ -78,6 +100,11 @@ public sealed class ModelBundle
             model.ExternalGroups[id] = group;
             result.Companions.Add(new(name, group, 10, "Compañero de " + origin));
         }
+        ExternalModelTextures.Resolve(result, resolveTexture ?? (name =>
+        {
+            byte[]? bytes = resolve("texture/" + name);
+            return bytes is null ? null : new(name, bytes, 0, "Textura externa de " + origin);
+        }), token);
         return result;
     }
 
@@ -90,6 +117,7 @@ public sealed class ModelBundle
             $"{r.Int(156)} hitboxes · {r.Int(212)} attachments · {Companions.Count} archivos compañeros encontrados",
             "El visor aproxima materiales e iluminación. La preparación no garantiza funcionamiento en CS 1.6.",
             .. Model.Warnings,
+            .. ExternalTextures.Select(t => "Textura externa resuelta: " + t.Origin),
             .. Missing.Select(m => "Falta dependencia: " + m),
             "Comprueba animaciones de disparo/recarga, sonidos y límites del cliente antes de instalar."];
         return string.Join(Environment.NewLine, lines) + "\r\n\r\n" + CompatibilityReport.Analyze(this).Describe();
@@ -110,12 +138,13 @@ public sealed class ModelBundle
         var written = new List<string>();
         try
         {
-            foreach (var asset in new[] { Main }.Concat(Companions))
+            foreach (var asset in new[] { Main }.Concat(Companions).Concat(ExternalTextures))
             {
                 token.ThrowIfCancellationRequested();
                 // Reuse path validation; then put files together to preserve companion lookup.
                 _ = SafeOutput.ResourcePath(folder, new(asset.Name, "prepared.mdl", "PAK", 0, 0, 0, 0));
                 string target = Path.Combine(folder, asset.Name);
+                SafeOutput.CreateDirectory(Path.GetDirectoryName(target)!);
                 using (var file = new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None)) file.Write(asset.Data);
                 written.Add(target);
             }
@@ -128,7 +157,7 @@ public sealed class ModelBundle
                     Diagnostico = Describe(),
                     RevisionEstructuralCS16 = CompatibilityReport.Analyze(this),
                     Animaciones = Model.Sequences.Select(s => new { s.Name, s.Frames, s.Fps, s.Blends }),
-                    Archivos = new[] { Main }.Concat(Companions).Select(a => new { a.Name, Bytes = a.Data.Length, SHA256 = Convert.ToHexString(SHA256.HashData(a.Data)) }),
+                    Archivos = new[] { Main }.Concat(Companions).Concat(ExternalTextures).Select(a => new { a.Name, Bytes = a.Data.Length, SHA256 = Convert.ToHexString(SHA256.HashData(a.Data)) }),
                     Pendiente = "No se reordenan secuencias, no se reducen polígonos ni se incluyen sonidos externos automáticamente. Los blends adicionales no se validan."
                 }, new JsonSerializerOptions { WriteIndented = true });
             written.Add(report);

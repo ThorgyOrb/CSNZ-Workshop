@@ -3,7 +3,11 @@ using System.Numerics;
 namespace CSNZWorkshop.Models;
 
 public record StudioBone(string Name, int Parent, Vector3 Position, Vector3 Rotation, float[] Scale);
-public record StudioTexture(string Name, int Width, int Height, int Flags, int[] Pixels);
+public record StudioTexture(string Name, int Width, int Height, int Flags, int[] Pixels)
+{
+    public string? Source { get; init; }
+    public bool ExternalPlaceholder => Name.StartsWith('#') && Width == 4 && Height == 1;
+}
 public record StudioCorner(int Vertex, int Normal, Vector2 UV);
 public record StudioTriangle(StudioCorner A, StudioCorner B, StudioCorner C, int Skin);
 public record StudioPart(string Name, Vector3[] Vertices, byte[] BoneIndices, Vector3[] Normals, byte[] NormalBoneIndices, StudioTriangle[] Triangles);

@@ -48,7 +48,14 @@ public static class ModelReport
                 try
                 {
                     var bundle = ModelBundle.Load(Read(entry), Path.GetFileName(path), package + " :: " + entry.Ruta,
-                        name => byPath.TryGetValue(folder + name, out var sibling) ? Read(sibling) : null);
+                        name => byPath.TryGetValue(folder + name, out var sibling) ? Read(sibling) : null,
+                        name =>
+                        {
+                            var candidates = ExternalModelTextures.Candidates(entry, name, entries);
+                            if (candidates.Length != 1) return null;
+                            var texture = candidates[0];
+                            return new(name, Read(texture), 0, package + " :: " + texture.Ruta);
+                        }, token);
                     read++;
                     string version = "v" + bundle.Main.OriginalVersion;
                     versions[version] = versions.GetValueOrDefault(version) + 1;

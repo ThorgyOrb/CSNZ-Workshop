@@ -49,6 +49,39 @@ public static class TextureCodec
         }
         return Bitmap(decoded.Width, decoded.Height, ColorAt);
     }
+    public static StudioTexture DecodeModelBitmap(byte[] bytes, string name, int flags)
+    {
+        if (bytes.Length > 64 * 1024 * 1024) throw new InvalidDataException("BMP externo demasiado grande (64 MB).");
+        var r = new ModelBytes(bytes); r.Range(0, 54);
+        if (r.UShort(0) != 0x4d42) throw new InvalidDataException("La textura externa no es un BMP.");
+        int dib = r.Int(14), width = r.Int(18), signedHeight = r.Int(22), bits = r.UShort(28), compression = r.Int(30), start = r.Int(10);
+        if (dib < 40 || dib > 124 || r.UShort(26) != 1 || signedHeight == int.MinValue) throw new InvalidDataException("Cabecera BMP externa no válida.");
+        int height = Math.Abs(signedHeight); Dimensions(width, height); r.Range(14, dib);
+        if (bits is not (8 or 24 or 32) || compression != 0) throw new NotSupportedException("La textura externa requiere BMP sin compresión de 8, 24 o 32 bits.");
+        int stride = checked(((width * bits + 31) / 32) * 4), paletteAt = 14 + dib;
+        int colors = bits == 8 ? r.Int(46) : 0;
+        if (bits == 8 && colors == 0) colors = 256;
+        if (colors < 0 || colors > 256) throw new InvalidDataException("Paleta BMP no válida.");
+        r.Range(paletteAt, colors * 4L);
+        if (start < paletteAt + colors * 4) throw new InvalidDataException("Píxeles BMP solapados con la cabecera o paleta.");
+        r.Range(start, (long)stride * height);
+        var pixels = new int[width * height];
+        for (int y = 0; y < height; y++)
+        for (int x = 0; x < width; x++)
+        {
+            int at = start + (signedHeight > 0 ? height - 1 - y : y) * stride + x * (bits / 8);
+            if (bits == 8)
+            {
+                int index = bytes[at];
+                if (index >= colors) throw new InvalidDataException("Índice de paleta BMP fuera de rango.");
+                if ((flags & 64) != 0 && index == 255) { pixels[y * width + x] = 0; continue; }
+                at = paletteAt + index * 4;
+            }
+            // BI_RGB's fourth byte is reserved, not an alpha channel.
+            pixels[y * width + x] = unchecked((int)0xff000000) | bytes[at + 2] << 16 | bytes[at + 1] << 8 | bytes[at];
+        }
+        return new(name, width, height, flags, pixels);
+    }
     internal static Bitmap Bitmap(int width, int height, Func<int, int, int> pixel)
     {
         Dimensions(width, height); var bitmap = new Bitmap(width, height, PixelFormat.Format32bppArgb);

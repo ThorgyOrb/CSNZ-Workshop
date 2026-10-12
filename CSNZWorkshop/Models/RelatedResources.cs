@@ -35,8 +35,10 @@ public static class RelatedResources
                 items.Add(new(kind, path, entry, reason + (candidates.Length > 1 ? ". Varias coincidencias: elige la versión." : ". Coincidencia de ruta."), true));
             }
         }
-        foreach (string name in bundle.Companions.Select(c => c.Name).Concat(bundle.Missing).Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (string name in bundle.Companions.Select(c => c.Name).Concat(bundle.Missing).Where(n => n.EndsWith(".mdl", StringComparison.OrdinalIgnoreCase)).Distinct(StringComparer.OrdinalIgnoreCase))
             Reference("Compañero MDL", folder + name, byPath[Normalize(folder + name)], "Dependencia del modelo según convención de nombres GoldSrc", true);
+        foreach (var texture in bundle.Model.Textures.Where(t => t.ExternalPlaceholder || t.Source is not null).DistinctBy(t => t.Name.ToUpperInvariant()))
+            Reference("Textura externa BMP", texture.Name, ExternalModelTextures.Candidates(source, texture.Name, library), "Textura referenciada por el MDL", false);
         foreach (string sound in bundle.Model.Events.Where(e => e.Code == 5004).Select(e => e.Options.Trim()).Distinct(StringComparer.OrdinalIgnoreCase))
         {
             string path = SoundPath(sound);

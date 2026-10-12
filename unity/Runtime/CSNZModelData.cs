@@ -17,9 +17,10 @@ namespace CSNZ.UnityBridge
         public ClipData[] animations;
         public AttachmentData[] attachments;
         public EventData[] events;
+        public GeometrySectionData[] geometrySections;
     }
     [Serializable] public class BoneData { public int id, parent; public string name; public float[] position, rotation; }
-    [Serializable] public class TextureData { public int id, width, height, flags; public string name, file; }
+    [Serializable] public class TextureData { public int id, width, height, flags; public string name, file, source, sha256; }
     [Serializable] public class BodyData { public int id; public string name; public string[] variants; }
     [Serializable] public class SkinData { public int[] textures; }
     [Serializable] public class MeshData
@@ -43,4 +44,10 @@ namespace CSNZ.UnityBridge
     }
     [Serializable] public class AttachmentData { public int id, bone; public string name; public float[] position, orientation; }
     [Serializable] public class EventData { public int sequence, frame, code; public string options; }
+    [Serializable] public class GeometrySectionData
+    {
+        public int body, variant, slot, triangles;
+        public string name, reason;
+        public bool suggestedExclude, excluded;
+    }
 }

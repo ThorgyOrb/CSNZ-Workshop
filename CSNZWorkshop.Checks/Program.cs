@@ -2,6 +2,22 @@ using System.Text;
 using CSNZWorkshop.Archives;
 using ICSharpCode.SharpZipLib.BZip2;
 
+if (args.Length == 3 && args[0] == "--guillotine-weapon-check")
+{
+    WeaponChecks.Guillotine(args[1], args[2]);
+    return;
+}
+if (args.Length == 4 && args[0] == "--texture-audit")
+{
+    TextureChecks.Audit(args[1], args[2], args[3]);
+    return;
+}
+if (args.Length == 2 && args[0] == "--verify-texture-audit")
+{
+    TextureChecks.VerifyAudit(args[1]);
+    return;
+}
+
 if (args.Length == 2 && args[0] == "--unity-fixture")
 {
     Console.WriteLine(UnityChecks.ExportFixture(args[1]));
@@ -157,6 +173,8 @@ try
     PakChecks.Run(Check);
     ModelChecks.Run(root, args.Length == 1 ? args[0] : null, Check);
     UnityChecks.Run(root, Check);
+    TextureChecks.Run(root, Check);
+    WeaponChecks.Run(root, Check);
     MediaChecks.Run(root, Check);
     AnalysisChecks.Run(root, Check);
     WorkflowChecks.Run(root, Check);

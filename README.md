@@ -8,6 +8,8 @@ Biblioteca de paquetes y recursos de CSNZ para Windows en C# / .NET 9. Los lecto
 
 En el visor MDL, **Exportar para Unity…** genera un paquete JSON + PNG con geometría, esqueleto, skins, variantes, attachments, eventos y todas las animaciones/blends con FPS válidos. Permite ajustar los metros por unidad. Copia la carpeta [`unity`](unity/README.md) a `Assets/CSNZWorkshop` de tu proyecto y usa **Tools > CSNZ Workshop > Import model.json** para crear assets persistentes y un prefab con rig Generic. Consulta [las instrucciones y limitaciones](unity/README.md) para materiales, conversión de ejes y pruebas.
 
+**Solo arma (sugerido)** permite quitar geometría de brazos/manos, con selección manual por parte/material y vista previa animada, conservando el esqueleto completo. También puedes exportar el modelo completo y usar **Import weapon only (keep animations)** en Unity. La primera comprobación con Guillotine conserva sus 56 huesos y 9 clips sin las dos variantes de manos.
+
 ### Sesión, caché y navegación
 
 La aplicación recuerda la carpeta del juego, búsqueda y categoría, vista de galería/lista, último destino de extracción, tema y favoritos. Los datos se guardan en `%LOCALAPPDATA%\CSNZWorkshop`; las pruebas usan carpetas temporales independientes. Al abrir la aplicación se detectan los paquetes de la carpeta recordada si existe.
@@ -146,6 +148,8 @@ La biblioteca se carga en segundo plano y puede cancelarse. Cancelar descarta el
 Selecciona un recurso `.mdl` en la biblioteca y pulsa **Ver modelo 3D**, o haz doble clic sobre él. En la ventana principal, **Abrir modelo…** abre un `.mdl` ya extraído junto con los archivos que estén a su lado en la misma carpeta.
 
 El visor descifra los modelos en memoria: las versiones 20 y 21 de Nexon se convierten con ICE al formato clásico versión 10, sin tocar el paquete original. Busca los archivos compañeros dentro de la misma biblioteca: la textura `…T.mdl` cuando el modelo no la incrusta y los grupos de animación `…01.mdl`, `…02.mdl`. Si falta alguno lo indica en el diagnóstico y sigue mostrando la geometría.
+
+Los MDL de Nexon también pueden referenciar un BMP externo mediante una textura de relleno `#…bmp` de 4×1 píxeles. El visor sustituye ese relleno por el BMP original de `models/texture`, conserva la paleta y la máscara por índice, y busca también texturas compartidas de manos en otros paquetes de la biblioteca. Prefiere la ruta del modelo y su paquete; si hay referencias ausentes o ambiguas, las muestra en Diagnóstico y bloquea la exportación a Unity. Las miniaturas antiguas se regeneran con la corrección.
 
 - Arrastra para girar, rueda para acercar y **Centrar** para volver a la vista inicial.
 - Elige una animación y pulsa **Reproducir**, o mueve el fotograma a mano. El encuadre se calcula con toda la animación elegida, así que el zoom no cambia mientras se reproduce ni se pierden las animaciones que desplazan el modelo.
