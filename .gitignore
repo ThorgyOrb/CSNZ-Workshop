@@ -1,3 +1,36 @@
+# Compilacion y paquetes NuGet restaurables
 **/bin/
 **/obj/
-artifacts/
+/artifacts/
+*.nupkg
+*.snupkg
+
+# Modelos de trabajo y herramientas externas ajenas a la aplicacion
+/assets/futuristic-scout/
+/tools/goldsrc/
+
+# Configuracion local de IDE y resultados de pruebas
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+TestResults/
+*.trx
+
+# Temporales, registros y caches de scripts auxiliares
+*.log
+*.tmp
+*.temp
+*.bak
+*~
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Metadatos del sistema operativo
+Thumbs.db
+Desktop.ini
+.DS_Store
