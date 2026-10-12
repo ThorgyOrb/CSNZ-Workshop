@@ -7,6 +7,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="..\unity\Runtime\CSNZModelData.cs" Link="Models\CSNZModelData.cs" />
     <PackageReference Include="SharpZipLib" Version="1.4.2" />
     <PackageReference Include="NLayer" Version="3.0.0" />
     <PackageReference Include="Pfim" Version="0.11.4" />

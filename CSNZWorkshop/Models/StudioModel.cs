@@ -4,12 +4,14 @@ namespace CSNZWorkshop.Models;
 
 public record StudioBone(string Name, int Parent, Vector3 Position, Vector3 Rotation, float[] Scale);
 public record StudioTexture(string Name, int Width, int Height, int Flags, int[] Pixels);
-public record StudioCorner(int Vertex, Vector2 UV);
+public record StudioCorner(int Vertex, int Normal, Vector2 UV);
 public record StudioTriangle(StudioCorner A, StudioCorner B, StudioCorner C, int Skin);
-public record StudioPart(string Name, Vector3[] Vertices, byte[] BoneIndices, StudioTriangle[] Triangles);
+public record StudioPart(string Name, Vector3[] Vertices, byte[] BoneIndices, Vector3[] Normals, byte[] NormalBoneIndices, StudioTriangle[] Triangles);
 public record StudioBody(string Name, StudioPart[] Variants);
-public record StudioSequence(string Name, float Fps, int Frames, int Blends, int AnimationOffset, int Group);
+public record StudioSequence(string Name, float Fps, int Frames, int Blends, int AnimationOffset, int Group, int Flags = 0);
 public record StudioEvent(int Sequence, int Frame, int Code, string Options);
+public record BoneLocalPose(Vector3 Position, Quaternion Rotation);
+public record StudioAttachment(string Name, int Bone, Vector3 Position, Vector3[] Orientation);
 
 public sealed class StudioModel
 {
@@ -23,6 +25,7 @@ public sealed class StudioModel
     public required string[] GroupNames { get; init; }
     public List<string> Warnings { get; } = [];
     public List<StudioEvent> Events { get; } = [];
+    public List<StudioAttachment> Attachments { get; } = [];
     public Dictionary<int, byte[]> ExternalGroups { get; } = [];
 
     public static StudioModel Parse(byte[] data, StudioModel? textureCompanion = null)
@@ -48,9 +51,15 @@ public sealed class StudioModel
             _ = r.Vector(at + 8); _ = r.Vector(at + 20);
         }
         int attachments = r.Table(r.Int(212), r.Int(216), 88, 1024);
+        var attachmentData = new List<StudioAttachment>();
         for (int i = 0; i < attachments; i++)
-            if (r.Int(r.Int(216) + i * 88 + 36) < 0 || r.Int(r.Int(216) + i * 88 + 36) >= boneCount)
+        {
+            int at = r.Int(216) + i * 88, bone = r.Int(at + 36);
+            if (bone < 0 || bone >= boneCount)
                 throw new InvalidDataException("Hueso de attachment inválido.");
+            attachmentData.Add(new(r.Text(at, 32), bone, r.Vector(at + 40),
+                [r.Vector(at + 52), r.Vector(at + 64), r.Vector(at + 76)]));
+        }
         int textureCount = r.Table(r.Int(180), r.Int(184), 80, 1024);
         var textures = new StudioTexture[textureCount];
         long totalPixels = 0;
@@ -108,7 +117,7 @@ public sealed class StudioModel
                 sequenceEvents.Add(new(i, r.Int(eventAt), r.Int(eventAt + 4), r.Text(eventAt + 12, 64)));
             }
             if (group == 0) r.Table(boneCount * blends, r.Int(at + 124), 12, 32768);
-            sequences[i] = new(r.Text(at, 32), fps, frames, blends, r.Int(at + 124), group);
+            sequences[i] = new(r.Text(at, 32), fps, frames, blends, r.Int(at + 124), group, r.Int(at + 36));
         }
         int bodyCount = r.Table(r.Int(204), r.Int(208), 76, 256);
         var bodies = new StudioBody[bodyCount];
@@ -134,6 +143,13 @@ public sealed class StudioModel
                 }
                 int normals = r.Table(r.Int(model + 92), r.Int(model + 100), 12, 100000);
                 r.Range(r.Int(model + 96), normals);
+                var normalVectors = new Vector3[normals]; var normalBones = new byte[normals];
+                for (int n = 0; n < normals; n++)
+                {
+                    normalVectors[n] = r.Vector(r.Int(model + 100) + n * 12);
+                    normalBones[n] = data[r.Int(model + 96) + n];
+                    if (normalBones[n] >= bones.Length) throw new InvalidDataException("Hueso de normal inválido.");
+                }
                 int meshes = r.Table(r.Int(model + 72), r.Int(model + 76), 20, 4096);
                 var triangles = new List<StudioTriangle>();
                 for (int mesh = 0; mesh < meshes; mesh++)
@@ -154,7 +170,7 @@ public sealed class StudioModel
                         {
                             int vertex = r.Short(cursor), normal = r.Short(cursor + 2);
                             if (vertex < 0 || vertex >= vertexCount || normal < 0 || normal >= normals) throw new InvalidDataException("Índice de triángulo inválido.");
-                            corners[c] = new(vertex, new(r.Short(cursor + 4), r.Short(cursor + 6)));
+                            corners[c] = new(vertex, normal, new(r.Short(cursor + 4), r.Short(cursor + 6)));
                         }
                         for (int c = 2; c < count; c++)
                         {
@@ -168,12 +184,13 @@ public sealed class StudioModel
                     }
                     if (generated != declared) throw new InvalidDataException("La malla no coincide con sus triángulos declarados.");
                 }
-                variants[m] = new(r.Text(model, 64), vertices, boneIds, triangles.ToArray());
+                variants[m] = new(r.Text(model, 64), vertices, boneIds, normalVectors, normalBones, triangles.ToArray());
             }
             bodies[b] = new(r.Text(body, 64), variants);
         }
         var result = new StudioModel { Data = data, Name = r.Text(8, 64), Bones = bones, Textures = textures, Bodies = bodies, Sequences = sequences, Skins = skins, GroupNames = groups };
         result.Events.AddRange(sequenceEvents);
+        result.Attachments.AddRange(attachmentData);
         if (bones.Length > 128) result.Warnings.Add("Supera 128 huesos: requiere recompilación/reducción para el formato clásico.");
         if (bodies.Any(b => b.Variants.Any(v => v.Vertices.Length > 2048))) result.Warnings.Add("Hay submodelos con más de 2048 vértices; revisar límites del cliente destino.");
         if (textures.Length > 100) result.Warnings.Add("Más de 100 texturas: revisar límites del cliente destino.");
@@ -186,19 +203,32 @@ public sealed class StudioModel
         return result;
     }
 
-    public Matrix4x4[] Pose(int sequence = -1, int frame = 0)
+    public Matrix4x4[] Pose(int sequence = -1, int frame = 0, int blend = 0)
+    {
+        var poses = GetLocalPose(sequence, frame, blend);
+        var transforms = new Matrix4x4[Bones.Length];
+        for (int b = 0; b < Bones.Length; b++)
+        {
+            var local = Matrix4x4.CreateFromQuaternion(poses[b].Rotation) * Matrix4x4.CreateTranslation(poses[b].Position);
+            transforms[b] = Bones[b].Parent < 0 ? local : local * transforms[Bones[b].Parent];
+        }
+        return transforms;
+    }
+
+    public BoneLocalPose[] GetLocalPose(int sequence = -1, int frame = 0, int blend = 0)
     {
         StudioSequence? seq = sequence >= 0 && sequence < Sequences.Length ? Sequences[sequence] : null;
+        if (blend < 0 || blend >= (seq?.Blends ?? 1)) throw new ArgumentOutOfRangeException(nameof(blend));
         ModelBytes r = new(Data);
         if (seq is not null && seq.Group != 0)
             r = new(ExternalGroups.TryGetValue(seq.Group, out var group) ? group : throw new InvalidDataException("Falta el archivo del grupo de animación externo."));
-        var transforms = new Matrix4x4[Bones.Length];
+        var transforms = new BoneLocalPose[Bones.Length];
         for (int b = 0; b < Bones.Length; b++)
         {
             var bone = Bones[b]; Vector3 position = bone.Position, rotation = bone.Rotation;
             if (seq is not null)
             {
-                int at = checked(seq.AnimationOffset + b * 12);
+                int at = checked(seq.AnimationOffset + (blend * Bones.Length + b) * 12);
                 for (int axis = 0; axis < 6; axis++)
                 {
                     int offset = r.UShort(at + axis * 2);
@@ -220,8 +250,8 @@ public sealed class StudioModel
                 }
             }
             var local = Matrix4x4.CreateRotationX(rotation.X) * Matrix4x4.CreateRotationY(rotation.Y)
-                * Matrix4x4.CreateRotationZ(rotation.Z) * Matrix4x4.CreateTranslation(position);
-            transforms[b] = bone.Parent < 0 ? local : local * transforms[bone.Parent];
+                * Matrix4x4.CreateRotationZ(rotation.Z);
+            transforms[b] = new(position, Quaternion.Normalize(Quaternion.CreateFromRotationMatrix(local)));
         }
         return transforms;
     }

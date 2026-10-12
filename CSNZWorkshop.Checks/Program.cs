@@ -2,6 +2,17 @@ using System.Text;
 using CSNZWorkshop.Archives;
 using ICSharpCode.SharpZipLib.BZip2;
 
+if (args.Length == 2 && args[0] == "--unity-fixture")
+{
+    Console.WriteLine(UnityChecks.ExportFixture(args[1]));
+    return;
+}
+if (args.Length == 3 && args[0] == "--export-unity")
+{
+    Console.WriteLine(CSNZWorkshop.Models.UnityModelExporter.Export(CSNZWorkshop.Models.ModelBundle.FromFile(args[1]), args[2]));
+    return;
+}
+
 if (args.Length == 3 && args[0] is "--additive-model" or "--inspect-effects")
 {
     var inventory = CSNZWorkshop.Inventory.Scan(args[1]);
@@ -145,6 +156,7 @@ try
     ExtractionChecks.Run(root, args.Length == 1 ? args[0] : null, Check);
     PakChecks.Run(Check);
     ModelChecks.Run(root, args.Length == 1 ? args[0] : null, Check);
+    UnityChecks.Run(root, Check);
     MediaChecks.Run(root, Check);
     AnalysisChecks.Run(root, Check);
     WorkflowChecks.Run(root, Check);

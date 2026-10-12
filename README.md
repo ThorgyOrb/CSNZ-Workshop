@@ -4,6 +4,10 @@ Biblioteca de paquetes y recursos de CSNZ para Windows en C# / .NET 9. Los lecto
 
 ## Iniciar
 
+### Exportar modelos a Unity
+
+En el visor MDL, **Exportar para Unity…** genera un paquete JSON + PNG con geometría, esqueleto, skins, variantes, attachments, eventos y todas las animaciones/blends con FPS válidos. Permite ajustar los metros por unidad. Copia la carpeta [`unity`](unity/README.md) a `Assets/CSNZWorkshop` de tu proyecto y usa **Tools > CSNZ Workshop > Import model.json** para crear assets persistentes y un prefab con rig Generic. Consulta [las instrucciones y limitaciones](unity/README.md) para materiales, conversión de ejes y pruebas.
+
 ### Sesión, caché y navegación
 
 La aplicación recuerda la carpeta del juego, búsqueda y categoría, vista de galería/lista, último destino de extracción, tema y favoritos. Los datos se guardan en `%LOCALAPPDATA%\CSNZWorkshop`; las pruebas usan carpetas temporales independientes. Al abrir la aplicación se detectan los paquetes de la carpeta recordada si existe.

@@ -59,6 +59,9 @@ public sealed class ModelForm : Form
         compare.Click += async (_, _) => { timer.Stop(); play.Text = "Reproducir"; await ModelComparisonForm.Open(this, bundle); };
         toolbar.Controls.AddRange([sequences, play, frame, skins, wire, reset, body, variant, prepare]);
         toolbar.Controls.Add(compare);
+        var exportUnity = new Button { Text = "Exportar para Unity…", AutoSize = true };
+        exportUnity.Click += (_, _) => { Pause(); using var dialog = new UnityExportForm(bundle); dialog.ShowDialog(this); };
+        toolbar.Controls.Add(exportUnity);
         toolbar.Controls.Add(nexonEffects);
         var previousFrame = new Button { Text = "◀ Fotograma", AutoSize = true };
         var nextFrame = new Button { Text = "Fotograma ▶", AutoSize = true };
